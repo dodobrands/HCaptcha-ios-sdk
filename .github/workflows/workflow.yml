@@ -32,7 +32,7 @@ jobs:
 
       - run: brew upgrade carthage
 
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1.139.0
         with:
           ruby-version: 2.7.2
           bundler-cache: true
@@ -58,7 +58,7 @@ jobs:
       - name: Use Xcode ${{ matrix.xcode }}
         run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
 
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1.139.0
         with:
           ruby-version: 2.7.2
           bundler-cache: true
@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      - uses: ruby/setup-ruby@v1
+      - uses: ruby/setup-ruby@v1.139.0
         with:
           ruby-version: 2.7.2
           bundler-cache: true
