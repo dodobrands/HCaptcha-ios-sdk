@@ -1,7 +1,6 @@
-
 Pod::Spec.new do |s|
   s.name             = 'HCaptcha'
-  s.version          = '2.1.1'
+  s.version          = '2.5.1'
   s.summary          = 'HCaptcha for iOS'
   s.swift_version    = '5.0'
   
@@ -24,9 +23,5 @@ invisibility is not possible.
   s.subspec 'Core' do |core|
     core.source_files = 'HCaptcha/Classes/*'
     core.frameworks = ['WebKit', 'JavaScriptCore']
-
-    core.resource_bundles = {
-      'HCaptcha' => ['HCaptcha/Assets/**/*']
-    }
   end
 end

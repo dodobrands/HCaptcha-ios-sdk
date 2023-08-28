@@ -1,3 +1,45 @@
+# 2.5.1
+
+- Feature: new `diagnosticLog` argument to enable debug logs.
+
+# 2.5.0
+
+- Feature: new `orientation` argument to set either `.portrait` or `.landscape` challenge orientation.
+
+# 2.4.1
+
+- Fix: release job in CI ([#108](https://github.com/hCaptcha/HCaptcha-ios-sdk/issues/108))
+
+# 2.4.0
+
+- Fix: call completion on WebContent process termination
+- Added: handle possible WebView navigation errors
+- Added: non-blocking initialization path
+
+# 2.3.3
+
+- Fix: Call configureWebView in case if WebView size wasn't changed ([#98](https://github.com/hCaptcha/HCaptcha-ios-sdk/issues/98)) ([#91](https://github.com/hCaptcha/HCaptcha-ios-sdk/issues/91))
+- Fix: open _black links from WebView ([#100](https://github.com/hCaptcha/HCaptcha-ios-sdk/issues/100))
+- Added pod size diff report ([#96](https://github.com/hCaptcha/HCaptcha-ios-sdk/issues/96))
+- Added benchmarking for public API ([#95](https://github.com/hCaptcha/HCaptcha-ios-sdk/issues/95))
+
+# 2.3.2
+
+- Fix: callback called twice on close error
+- Feature: `hcaptcha-form.html` asset moved into a variable
+
+# 2.3.1
+
+- Fix: double call of `completion` for `.challengeClosed` error
+
+# 2.3.0
+
+- Feature: support more events in `onEvent` ([#78](https://github.com/hCaptcha/HCaptcha-ios-sdk/issues/78))
+
+# 2.2.0
+
+- Feature: the SDK allows you to receive interaction events for your analytics via the `onEvent` method ([#72](https://github.com/hCaptcha/HCaptcha-ios-sdk/issues/72))
+
 # 2.1.1
 
 - Infrastructure: CI now tests example app compilation for both Xcode 12.x and 13.x

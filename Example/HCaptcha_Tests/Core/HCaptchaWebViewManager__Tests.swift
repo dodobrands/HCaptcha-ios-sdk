@@ -381,7 +381,8 @@ class HCaptchaWebViewManager__Tests: XCTestCase {
     func test__Validate__Reset_On_Error() {
         let exp0 = expectation(description: "should call configureWebView")
         var exp0Count = 0
-        let exp1 = expectation(description: "fail on first execution")
+        let exp1 = expectation(description: "should call onEvent")
+        let exp2 = expectation(description: "fail on first execution")
         var result: HCaptchaResult?
 
         // Validate
@@ -393,11 +394,17 @@ class HCaptchaWebViewManager__Tests: XCTestCase {
             }
         }
 
+        manager.onEvent = { (event, error) in
+            XCTAssertEqual(.error, event)
+            XCTAssertEqual(HCaptchaError.wrongMessageFormat, error as? HCaptchaError)
+            exp1.fulfill()
+        }
+
         // Error
         manager.validate(on: presenterView, resetOnError: true) { response in
             result = response
 
-            exp1.fulfill()
+            exp2.fulfill()
         }
 
         waitForExpectations(timeout: 10)
@@ -470,7 +477,7 @@ class HCaptchaWebViewManager__Tests: XCTestCase {
         manager.onDidFinishLoading = exp.fulfill
         manager.reset()
 
-        waitForExpectations(timeout: 3)
+        waitForExpectations(timeout: 5)
     }
 
     func test__Invalid_Theme() {
@@ -479,6 +486,116 @@ class HCaptchaWebViewManager__Tests: XCTestCase {
         let manager = HCaptchaWebViewManager(messageBody: "{action: \"showHCaptcha\"}",
                                              apiKey: apiKey,
                                              theme: "[Object object]") // invalid theme
+        manager.shouldResetOnError = false
+        manager.configureWebView { _ in
+            XCTFail("should not ask to configure the webview")
+        }
+
+        manager.validate(on: presenterView, resetOnError: false) { response in
+            XCTAssertEqual(HCaptchaError.htmlLoadError, response.error)
+            exp.fulfill()
+        }
+
+        waitForExpectations(timeout: 10)
+    }
+
+    func test__OnEvent_Open_Callback() {
+        let exp0 = expectation(description: "should call configureWebView")
+        let exp1 = expectation(description: "setup key")
+        let exp2 = expectation(description: "hcaptcha opened")
+        var result: HCaptchaResult?
+
+        // Validate
+        let manager = HCaptchaWebViewManager(messageBody: "{token: key}", apiKey: apiKey)
+        manager.configureWebView { _ in
+            exp0.fulfill()
+        }
+        manager.onEvent = { (event, data) in
+            XCTAssertNil(data)
+            XCTAssertEqual(event, .open)
+            exp1.fulfill()
+        }
+
+        manager.validate(on: presenterView) { response in
+            result = response
+            exp2.fulfill()
+        }
+
+        waitForExpectations(timeout: 10)
+
+        XCTAssertNotNil(result)
+        XCTAssertNil(result?.error)
+        XCTAssertEqual(result?.token, apiKey)
+    }
+
+    func test__OnEvent_Without_Validation() {
+        let testParams: [(String, HCaptchaEvent)] = [("onChallengeExpired", .challengeExpired),
+                                                     ("onExpired", .expired),
+                                                     ("onClose", .close)]
+
+        testParams.forEach { (action, expectedEventType) in
+            let exp0 = expectation(description: "should call configureWebView")
+            let exp = expectation(description: "challenge expired received")
+
+            let manager = HCaptchaWebViewManager(messageBody: "{action: \"\(action)\"}")
+            manager.configureWebView { _ in
+                exp0.fulfill()
+            }
+            manager.onEvent = { (event, data) in
+                XCTAssertNil(data)
+                XCTAssertEqual(expectedEventType, event)
+                exp.fulfill()
+            }
+
+            manager.validate(on: presenterView) { _ in
+                XCTFail("should not validate")
+            }
+
+            waitForExpectations(timeout: 5)
+        }
+    }
+
+    func test__Open_External_Link() {
+        let exp0 = expectation(description: "should call configureWebView")
+        let exp1 = expectation(description: "_target link should be checked")
+        let exp2 = expectation(description: "_target link should be opened")
+
+        class TestURLOpener: HCaptchaURLOpener {
+            private let canOpenExpectation: XCTestExpectation
+            private let openExpectation: XCTestExpectation
+
+            init(_ canOpen: XCTestExpectation, _ open: XCTestExpectation) {
+                self.canOpenExpectation = canOpen
+                self.openExpectation = open
+            }
+
+            func canOpenURL(_ url: URL) -> Bool {
+                canOpenExpectation.fulfill()
+                return true
+            }
+
+            func openURL(_ url: URL) {
+                openExpectation.fulfill()
+            }
+        }
+
+        let manager = HCaptchaWebViewManager(messageBody: "{token: key, action: \"openExternalPage\"}",
+                                             apiKey: apiKey,
+                                             urlOpener: TestURLOpener(exp1, exp2))
+        manager.configureWebView { _ in
+            exp0.fulfill()
+        }
+        wait(for: [exp0], timeout: 5)
+        manager.validate(on: presenterView)
+
+        wait(for: [exp1, exp2], timeout: 5)
+    }
+
+    func test__Invalid_HTML() {
+        let exp = expectation(description: "bad theme value")
+
+        let manager = HCaptchaWebViewManager(messageBody: "{ invalid json",
+                                             apiKey: apiKey)
         manager.shouldResetOnError = false
         manager.configureWebView { _ in
             XCTFail("should not ask to configure the webview")

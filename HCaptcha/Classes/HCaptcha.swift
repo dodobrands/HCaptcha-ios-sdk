@@ -22,6 +22,8 @@ public class HCaptcha: NSObject {
         }
     }
 
+    typealias Log = HCaptchaLogger
+
     /// The worker that handles webview events and communication
     let manager: HCaptchaWebViewManager
 
@@ -29,9 +31,21 @@ public class HCaptcha: NSObject {
      - parameters:
          - apiKey: The API key sent to the HCaptcha init
          - baseURL: The base URL sent to the HCaptcha init
-         - endpoint: The HCaptcha endpoint to be used.
          - locale: A locale value to translate HCaptcha into a different language
-     
+         - size: A HCaptcha size check `HCaptchaSize` for more details
+         - orientation: A HCaptcha orientation: `.portrait` or `.landscape` is available
+         -  jsSrc: See Enterprise docs
+         - rqdata: See Enterprise docs.
+         - sentry: See Enterprise docs
+         - endpoint: See Enterprise docs
+         - reportapi: See Enterprise docs
+         - assethost: See Enterprise docs
+         - imghost: See Enterprise docs
+         - host: See Enterprise docs
+         - theme: HCaptcha supports `.light`, `dark` and `.contrast` themes
+         - customTheme: See Enterprise docs
+         - diagnosticLog: Emit detailed console logs for debugging
+
      Initializes a HCaptcha object
 
      Both `apiKey` and `baseURL` may be nil, in which case the lib will look for entries of `HCaptchaKey` and
@@ -50,6 +64,7 @@ public class HCaptcha: NSObject {
         baseURL: URL? = nil,
         locale: Locale? = nil,
         size: HCaptchaSize = .invisible,
+        orientation: HCaptchaOrientation = .portrait,
         jsSrc: URL = URL(string: "https://js.hcaptcha.com/1/api.js")!,
         rqdata: String? = nil,
         sentry: Bool = false,
@@ -59,8 +74,11 @@ public class HCaptcha: NSObject {
         imghost: URL? = nil,
         host: String? = nil,
         theme: String = "light",
-        customTheme: String? = nil
+        customTheme: String? = nil,
+        diagnosticLog: Bool = false
     ) throws {
+        Log.minLevel = diagnosticLog ? .debug : .warning
+
         let infoDict = Bundle.main.infoDictionary
 
         let plistApiKey = infoDict?[Constants.InfoDictKeys.APIKey] as? String
@@ -72,6 +90,7 @@ public class HCaptcha: NSObject {
                                         infoPlistURL: plistDomain,
                                         jsSrc: jsSrc,
                                         size: size,
+                                        orientation: orientation,
                                         rqdata: rqdata,
                                         sentry: sentry,
                                         endpoint: endpoint,
@@ -82,12 +101,15 @@ public class HCaptcha: NSObject {
                                         theme: theme,
                                         customTheme: customTheme)
 
+        Log.debug(".init with: \(config)")
+
         self.init(manager: HCaptchaWebViewManager(
             html: config.html,
             apiKey: config.apiKey,
             baseURL: config.baseURL,
             endpoint: config.getEndpointURL(locale: locale),
             size: config.size,
+            orientation: config.orientation,
             rqdata: config.rqdata,
             theme: config.actualTheme
         ))
@@ -103,6 +125,18 @@ public class HCaptcha: NSObject {
     }
 
     /**
+     - parameter reciever: A callback function
+
+       onEvent allow to subscribe to SDK's events
+     */
+    @objc
+    public func onEvent(_ reciever: ((HCaptchaEvent, Any?) -> Void)? = nil) {
+        Log.debug(".onEvent")
+
+        manager.onEvent = reciever
+    }
+
+    /**
      - parameters:
          - view: The view that should present the webview.
          - resetOnError: If HCaptcha should be reset if it errors. Defaults to `true`.
@@ -112,6 +146,8 @@ public class HCaptcha: NSObject {
     */
     @objc
     public func validate(on view: UIView, resetOnError: Bool = true, completion: @escaping (HCaptchaResult) -> Void) {
+        Log.debug(".validate on: \(view) resetOnError: \(resetOnError)")
+
         manager.shouldResetOnError = resetOnError
         manager.completion = completion
 
@@ -122,6 +158,8 @@ public class HCaptcha: NSObject {
     /// Stops the execution of the webview
     @objc
     public func stop() {
+        Log.debug(".stop")
+
         manager.stop()
     }
 
@@ -136,6 +174,8 @@ public class HCaptcha: NSObject {
     */
     @objc
     public func configureWebView(_ configure: @escaping (WKWebView) -> Void) {
+        Log.debug(".configureWebView")
+
         manager.configureWebView = configure
     }
 
@@ -146,6 +186,8 @@ public class HCaptcha: NSObject {
     */
     @objc
     public func reset() {
+        Log.debug(".reset")
+
         manager.reset()
     }
 
@@ -160,6 +202,7 @@ public class HCaptcha: NSObject {
     */
     @objc
     public func didFinishLoading(_ closure: (() -> Void)?) {
+        Log.debug(".didFinishLoading")
         manager.onDidFinishLoading = closure
     }
 
@@ -170,7 +213,9 @@ public class HCaptcha: NSObject {
     @objc
     public var forceVisibleChallenge: Bool {
         get { return manager.forceVisibleChallenge }
-        set { manager.forceVisibleChallenge = newValue }
+        set {
+            manager.forceVisibleChallenge = newValue
+        }
     }
 
     /**
@@ -183,7 +228,9 @@ public class HCaptcha: NSObject {
     @objc
     public var shouldSkipForTests: Bool {
         get { return manager.shouldSkipForTests }
-        set { manager.shouldSkipForTests = newValue }
+        set {
+            manager.shouldSkipForTests = newValue
+        }
     }
 #endif
 

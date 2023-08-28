@@ -18,13 +18,14 @@ extension HCaptchaWebViewManager {
     }()
 
     convenience init(
-        messageBody: String = "",
+        messageBody: String = "undefined",
         apiKey: String? = nil,
         endpoint: URL? = nil,
         shouldFail: Bool = false,
         size: HCaptchaSize = .invisible,
         rqdata: String? = nil,
-        theme: String = "\"light\""
+        theme: String = "\"light\"",
+        urlOpener: HCaptchaURLOpener = HCapchaAppURLOpener()
     ) {
         let html = String(format: HCaptchaWebViewManager.unformattedHTML,
                           arguments: [
@@ -38,7 +39,8 @@ extension HCaptchaWebViewManager {
             endpoint: endpoint,
             size: size,
             rqdata: rqdata,
-            theme: theme
+            theme: theme,
+            urlOpener: urlOpener
         )
     }
 
@@ -47,8 +49,10 @@ extension HCaptchaWebViewManager {
         apiKey: String? = nil,
         endpoint: URL? = nil,
         size: HCaptchaSize = .invisible,
+        orientation: HCaptchaOrientation = .portrait,
         rqdata: String? = nil,
-        theme: String = "\"light\""
+        theme: String = "\"light\"",
+        urlOpener: HCaptchaURLOpener = HCapchaAppURLOpener()
     ) {
         let localhost = URL(string: "http://localhost")!
 
@@ -58,8 +62,10 @@ extension HCaptchaWebViewManager {
             baseURL: localhost,
             endpoint: endpoint ?? localhost,
             size: size,
+            orientation: orientation,
             rqdata: rqdata,
-            theme: theme
+            theme: theme,
+            urlOpener: urlOpener
         )
     }
 

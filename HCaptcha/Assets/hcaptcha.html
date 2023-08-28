@@ -1,7 +1,7 @@
 <html>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
-    
+
     <style>
         * {
             padding: 0;
@@ -84,9 +84,12 @@
         post({ token: token });
       };
 
-      var expiredCallback = function() {
-        console.log("expired challenge");
-        post({ error: 15 });
+      var expiredCallback = function(action) {
+        return function() {
+          console.log("expired challenge");
+          post({ error: 15 });
+          post({ action: action });
+        };
       };
 
       var errorCallback = function(error) {
@@ -97,11 +100,13 @@
       var closeCallback = function() {
         console.log("challenge closed by user");
         post({ error: 30 });
+        post({ action: "onClose" });
       };
 
       var openCallback = function(e) {
         console.log("challenge opened", e);
         post({ action: "showHCaptcha" });
+        post({ action: "onOpen" });
       };
 
       var onloadCallback = function() {
@@ -110,11 +115,12 @@
           hcaptcha.render("hcaptcha-container", {
             "sitekey": "${apiKey}",
             "size": "${size}",
+            "orientation": "${orientation}",
             "theme": ${theme},
             "callback": onPass,
             "close-callback": closeCallback,
-            "expired-callback": expiredCallback,
-            "chalexpired-callback": expiredCallback,
+            "expired-callback": expiredCallback("onExpired"),
+            "chalexpired-callback": expiredCallback("onChallengeExpired"),
             "error-callback": errorCallback,
             "open-callback": openCallback,
           });
@@ -127,13 +133,15 @@
       };
 
       document.addEventListener('DOMContentLoaded', function () {
-        document.body.onclick = function () {
+        var container = document.getElementById("hcaptcha-container");
+        container.addEventListener("click", function () {
           if (window.hcaptcha) {
-              window.hcaptcha.close();
+            // Allows dismissal of checkbox view
+            window.hcaptcha.close();
           } else {
-              post({ error: 30 });
+            post({ error: 30 });
           }
-        };
+        });
       });
     </script>
   </head>

@@ -2,27 +2,27 @@
 //  HCaptchaWebViewManager.swift
 //  HCaptcha
 //
-//  Created by Flávio Caetano on 22/03/17.
 //  Copyright © 2018 HCaptcha. All rights reserved.
 //
 
 import Foundation
 import WebKit
 
-
 /** Handles comunications with the webview containing the HCaptcha challenge.
  */
-internal class HCaptchaWebViewManager {
+internal class HCaptchaWebViewManager: NSObject {
     enum JSCommand: String {
         case execute = "execute();"
         case reset = "reset();"
     }
 
+    typealias Log = HCaptchaLogger
+
     fileprivate struct Constants {
-        static let ExecuteJSCommand = "execute();"
-        static let ResetCommand = "reset();"
         static let BotUserAgent = "bot/2.1"
     }
+
+    fileprivate let webViewInitSize = CGSize(width: 1, height: 1)
 
 #if DEBUG
     /// Forces the challenge to be explicitly displayed.
@@ -43,6 +43,9 @@ internal class HCaptchaWebViewManager {
 
     /// Sends the result message
     var completion: ((HCaptchaResult) -> Void)?
+
+    /// Called (currently) when a challenge becomes visible
+    var onEvent: ((HCaptchaEvent, Any?) -> Void)?
 
     /// Notifies the JS bundle has finished loading
     var onDidFinishLoading: (() -> Void)? {
@@ -65,9 +68,6 @@ internal class HCaptchaWebViewManager {
     /// The JS message recoder
     fileprivate var decoder: HCaptchaDecoder!
 
-    /// Debug info
-    fileprivate let debugInfo = HCaptchaDebugInfo()
-
     /// Indicates if the script has already been loaded by the `webView`
     fileprivate var didFinishLoading = false {
         didSet {
@@ -76,6 +76,9 @@ internal class HCaptchaWebViewManager {
             }
         }
     }
+
+    /// Stop async webView configuration
+    private var stopInitWebViewConfiguration = false
 
     /// The observer for `.UIWindowDidBecomeVisible`
     fileprivate var observer: NSObjectProtocol?
@@ -92,15 +95,20 @@ internal class HCaptchaWebViewManager {
     /// The webview that executes JS code
     lazy var webView: WKWebView = {
         let webview = WKWebView(
-            frame: CGRect(x: 0, y: 0, width: 1, height: 1),
+            frame: CGRect(origin: CGPoint.zero, size: webViewInitSize),
             configuration: self.buildConfiguration()
         )
         webview.accessibilityIdentifier = "webview"
         webview.accessibilityTraits = UIAccessibilityTraits.link
         webview.isHidden = true
 
+        Log.debug("WebViewManager WKWebView instance created")
+
         return webview
     }()
+
+    /// Responsible for external link handling
+    fileprivate let urlOpener: HCaptchaURLOpener
 
     /**
      - parameters:
@@ -109,23 +117,37 @@ internal class HCaptchaWebViewManager {
          - baseURL: The URL configured with the sitekey
          - endpoint: The JS API endpoint to be loaded onto the HTML file.
          - size: Size of visible area
+         - orientation: Of the widget
          - rqdata: Custom supplied challenge data
          - theme: Widget theme, value must be valid JS Object or String with brackets
      */
     init(html: String, apiKey: String, baseURL: URL, endpoint: URL,
-         size: HCaptchaSize, rqdata: String?, theme: String) {
+         size: HCaptchaSize, orientation: HCaptchaOrientation, rqdata: String?,
+         theme: String, urlOpener: HCaptchaURLOpener = HCapchaAppURLOpener()) {
+        Log.debug("WebViewManager.init")
+        self.urlOpener = urlOpener
+        super.init()
         self.baseURL = baseURL
         self.decoder = HCaptchaDecoder { [weak self] result in
             self?.handle(result: result)
         }
-        self.formattedHTML = String(format: html, arguments: ["apiKey": apiKey,
-                                                              "endpoint": endpoint.absoluteString,
-                                                              "size": size.rawValue,
-                                                              "rqdata": rqdata ?? "",
-                                                              "theme": theme,
-                                                              "debugInfo": debugInfo.json])
+        DispatchQueue.global(qos: .userInitiated).async {
+            let debugInfo = HCaptchaDebugInfo.json
+            Log.debug("WebViewManager.init after debug")
+            self.formattedHTML = String(format: html, arguments: ["apiKey": apiKey,
+                                                                  "endpoint": endpoint.absoluteString,
+                                                                  "size": size.rawValue,
+                                                                  "orientation": orientation.rawValue,
+                                                                  "rqdata": rqdata ?? "",
+                                                                  "theme": theme,
+                                                                  "debugInfo": debugInfo])
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                guard !self.stopInitWebViewConfiguration else { return }
 
-        setupWebview(html: self.formattedHTML, url: baseURL)
+                self.setupWebview(html: self.formattedHTML, url: baseURL)
+            }
+        }
     }
 
     /**
@@ -134,6 +156,7 @@ internal class HCaptchaWebViewManager {
      Starts the challenge validation
      */
     func validate(on view: UIView) {
+        Log.debug("WebViewManager.validate on: \(view)")
 #if DEBUG
         guard !shouldSkipForTests else {
             completion?(HCaptchaResult(token: ""))
@@ -141,13 +164,17 @@ internal class HCaptchaWebViewManager {
         }
 #endif
         view.addSubview(webView)
+        if self.didFinishLoading && (webView.bounds.size == CGSize.zero || webView.bounds.size == webViewInitSize) {
+            self.doConfigureWebView()
+        }
 
         executeJS(command: .execute)
     }
 
-
     /// Stops the execution of the webview
     func stop() {
+        Log.debug("WebViewManager.stop")
+        stopInitWebViewConfiguration = true
         webView.stopLoading()
     }
 
@@ -157,11 +184,13 @@ internal class HCaptchaWebViewManager {
      The reset is achieved by calling `ghcaptcha.reset()` on the JS API.
      */
     func reset() {
+        Log.debug("WebViewManager.reset")
         configureWebViewDispatchToken = UUID()
+        stopInitWebViewConfiguration = false
         if didFinishLoading {
             executeJS(command: .reset)
             didFinishLoading = false
-        } else {
+        } else if let formattedHTML = self.formattedHTML {
             setupWebview(html: formattedHTML, url: baseURL)
         }
     }
@@ -193,32 +222,19 @@ fileprivate extension HCaptchaWebViewManager {
      Handles the decoder results received from the webview
      */
     func handle(result: HCaptchaDecoder.Result) {
+        Log.debug("WebViewManager.handleResult: \(result)")
         switch result {
-        case .token(let token):
-            completion?(HCaptchaResult(token: token))
-
+        case .token(let token): completion?(HCaptchaResult(token: token))
         case .error(let error):
             handle(error: error)
-
-        case .showHCaptcha:
-            webView.isHidden = false
-
-        case .didLoad:
-            didFinishLoading = true
-            if completion != nil {
-                executeJS(command: .execute)
-            }
-            if configureWebView != nil {
-                DispatchQueue.once(token: configureWebViewDispatchToken) { [weak self] in
-                    guard let `self` = self else { return }
-                    self.configureWebView?(self.webView)
-                }
-            }
-
-        case .log(let message):
-            #if DEBUG
-                print("[JS LOG]:", message)
-            #endif
+            onEvent?(.error, error)
+        case .showHCaptcha: webView.isHidden = false
+        case .didLoad: didLoad()
+        case .onOpen: onEvent?(.open, nil)
+        case .onExpired: onEvent?(.expired, nil)
+        case .onChallengeExpired: onEvent?(.challengeExpired, nil)
+        case .onClose: onEvent?(.close, nil)
+        case .log(_): break
         }
     }
 
@@ -242,6 +258,25 @@ fileprivate extension HCaptchaWebViewManager {
         }
     }
 
+    private func didLoad() {
+        Log.debug("WebViewManager.didLoad")
+        didFinishLoading = true
+        if completion != nil {
+            executeJS(command: .execute)
+        }
+        self.doConfigureWebView()
+    }
+
+    private func doConfigureWebView() {
+        Log.debug("WebViewManager.doConfigureWebView")
+        if configureWebView != nil {
+            DispatchQueue.once(token: configureWebViewDispatchToken) { [weak self] in
+                guard let `self` = self else { return }
+                self.configureWebView?(self.webView)
+            }
+        }
+    }
+
     /**
      - parameters:
          - html: The embedded HTML file
@@ -251,7 +286,7 @@ fileprivate extension HCaptchaWebViewManager {
      */
     func setupWebview(html: String, url: URL) {
         if let window = UIApplication.shared.keyWindow {
-            setupWebview(on: window, html: formattedHTML, url: baseURL)
+            setupWebview(on: window, html: html, url: url)
         } else {
             observer = NotificationCenter.default.addObserver(
                 forName: UIWindow.didBecomeVisibleNotification,
@@ -260,7 +295,7 @@ fileprivate extension HCaptchaWebViewManager {
             ) { [weak self] notification in
                 guard let window = notification.object as? UIWindow else { return }
                 guard let slf = self else { return }
-                slf.setupWebview(on: window, html: slf.formattedHTML, url: slf.baseURL)
+                slf.setupWebview(on: window, html: html, url: url)
             }
         }
     }
@@ -274,8 +309,14 @@ fileprivate extension HCaptchaWebViewManager {
      Adds the webview to a valid UIView and loads the initial HTML file
      */
     func setupWebview(on window: UIWindow, html: String, url: URL) {
-        window.addSubview(webView)
+        Log.debug("WebViewManager.setupWebview")
+        if webView.superview == nil {
+            window.addSubview(webView)
+        }
         webView.loadHTMLString(html, baseURL: url)
+        if webView.navigationDelegate == nil {
+            webView.navigationDelegate = self
+        }
 
         if let observer = observer {
             NotificationCenter.default.removeObserver(observer)
@@ -290,20 +331,61 @@ fileprivate extension HCaptchaWebViewManager {
      finished loading.
      */
     func executeJS(command: JSCommand) {
+        Log.debug("WebViewManager.executeJS: \(command)")
         guard didFinishLoading else {
             if let error = lastError {
                 DispatchQueue.main.async { [weak self] in
+                    Log.debug("WebViewManager complete with pendingError: \(error)")
                     self?.completion?(HCaptchaResult(error: error))
                     self?.lastError = nil
+                }
+                if error == .networkError {
+                    Log.debug("WebViewManager reloads html after \(error) error")
+                    self.webView.loadHTMLString(formattedHTML, baseURL: baseURL)
                 }
             }
             return
         }
-
         webView.evaluateJavaScript(command.rawValue) { [weak self] _, error in
             if let error = error {
                 self?.decoder.send(error: .unexpected(error))
             }
         }
+    }
+}
+
+extension HCaptchaWebViewManager: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if navigationAction.targetFrame == nil, let url = navigationAction.request.url, urlOpener.canOpenURL(url) {
+            urlOpener.openURL(url)
+        }
+        decisionHandler(WKNavigationActionPolicy.allow)
+    }
+
+    /// Tells the delegate that an error occurred during navigation.
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        Log.debug("WebViewManager.webViewDidFail with \(error)")
+        completion?(HCaptchaResult(error: .unexpected(error)))
+    }
+
+    /// Tells the delegate that an error occurred during the early navigation process.
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        Log.debug("WebViewManager.webViewDidFailProvisionalNavigation with \(error)")
+        completion?(HCaptchaResult(error: .unexpected(error)))
+    }
+
+    /// Tells the delegate that the web view’s content process was terminated.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        Log.debug("WebViewManager.webViewWebContentProcessDidTerminate")
+        let kHCaptchaErrorWebViewProcessDidTerminate = -1
+        let kHCaptchaErrorDomain = "com.hcaptcha.sdk-ios"
+        let error = NSError(domain: kHCaptchaErrorDomain,
+                            code: kHCaptchaErrorWebViewProcessDidTerminate,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: "WebView web content process did terminate",
+                                NSLocalizedRecoverySuggestionErrorKey: "Call HCaptcha.reset()"])
+        completion?(HCaptchaResult(error: .unexpected(error)))
+        didFinishLoading = false
     }
 }

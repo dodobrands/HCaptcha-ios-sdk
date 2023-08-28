@@ -1,4 +1,4 @@
-name: Build
+name: ci
 
 on:
   push:
@@ -12,18 +12,26 @@ on:
   workflow_dispatch:
   repository_dispatch:
 
+concurrency:
+  group: '${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.ref_name }}'
+  cancel-in-progress: true
+
+env:
+  XCODE_VERSION: '13.1'
+  RUBY_VERSION: '2.7.2'
+
 jobs:
   sdk:
     name: Test SDK
     runs-on: macOS-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
-      - name: Use Xcode 12.4
-        run: sudo xcode-select -switch /Applications/Xcode_12.4.app
+      - name: Use Xcode ${{ env.XCODE_VERSION }}
+        run: sudo xcode-select -switch /Applications/Xcode_${XCODE_VERSION}.app
 
       - name: "Cache dependencies"
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: Carthage/build
           key: ${{ runner.os }}-carthage-v2-${{ hashFiles('**/Cartfile.resolved') }}
@@ -34,33 +42,106 @@ jobs:
 
       - uses: ruby/setup-ruby@v1.139.0
         with:
-          ruby-version: 2.7.2
+          ruby-version: ${{ env.RUBY_VERSION }}
           bundler-cache: true
 
-      - run: bundle exec fastlane ci
+      - run: |
+          bundle exec fastlane ci
+          cp .lint/cocoapods-size/result.json cocoapods-size-result.json
+
+      - if: github.event_name == 'push'
+        uses: actions/cache@v3
+        with:
+          path: cocoapods-size-result.json
+          key: cocoapods-size-${{ github.sha }}
+
+  size-report:
+    name: Cocoapods size report
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/cache@v3
+        with:
+          path: cocoapods-size-result.json
+          key: cocoapods-size-${{ github.sha }}
+          restore-keys: cocoapods-size-
+
+      - run: brew install jq
+
+      - if: hashFiles('cocoapods-size-result.json') == ''
+        run: |
+          jq -n '{combined_pods_extra_size: 0}' > cocoapods-size-result.json
+
+      - id: main_size
+        run: |
+          main_size=$(jq '.combined_pods_extra_size // 0' cocoapods-size-result.json -r)
+          echo "value=${main_size}" >> $GITHUB_OUTPUT
+
+      - name: Use Xcode ${{ env.XCODE_VERSION }}
+        run: sudo xcode-select -switch /Applications/Xcode_${XCODE_VERSION}.app
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+          bundler-cache: true
+
+      - run: bundle exec fastlane pod_size
+
+      - id: pr_size
+        run: |
+          pr_size=$(jq '.combined_pods_extra_size' .lint/cocoapods-size/result.json -r)
+          echo "value=${pr_size}" >> $GITHUB_OUTPUT
+
+      - id: diff_size
+        run: echo "value=$((${{ steps.pr_size.outputs.value }} - ${{ steps.main_size.outputs.value }}))" >> $GITHUB_OUTPUT
+
+      - uses: peter-evans/find-comment@v2
+        id: find_comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-includes: Cocoapods size report
+
+      - uses: peter-evans/create-or-update-comment@v2
+        with:
+          body: |
+            Cocoapods size report:
+            ```
+            OLD: ${{ steps.main_size.outputs.value }} bytes
+            NEW: ${{ steps.pr_size.outputs.value }} bytes
+
+            DIFF: ${{ steps.diff_size.outputs.value }} bytes
+            ```
+          edit-mode: replace
+          comment-id: ${{ steps.find_comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   samples:
     name: Build Samples
     needs: sdk
-    runs-on: macos-11
+    runs-on: macos-12
     continue-on-error: ${{ matrix.experimental }}
     strategy:
       fail-fast: false
       matrix:
-        xcode: [ '12.4' ]
+        xcode: [ '13.1' ]
         experimental: [ false ]
         include:
-          - xcode: '13.2.1'
+          - xcode: '13.4.1'
+            experimental: true
+          - xcode: '14.2'
             experimental: true
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Use Xcode ${{ matrix.xcode }}
         run: sudo xcode-select -switch /Applications/Xcode_${{ matrix.xcode }}.app
 
       - uses: ruby/setup-ruby@v1.139.0
         with:
-          ruby-version: 2.7.2
+          ruby-version: ${{ env.RUBY_VERSION }}
           bundler-cache: true
 
       - run: bundle exec pod install
@@ -69,16 +150,19 @@ jobs:
       - run: bundle exec fastlane ios samples_build
 
   release:
-    name: Relase
+    name: Release
     if: startsWith(github.ref, 'refs/tags')
     needs: samples
     runs-on: macOS-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
+
+      - name: Use Xcode ${{ env.XCODE_VERSION }}
+        run: sudo xcode-select -switch /Applications/Xcode_${XCODE_VERSION}.app
 
       - uses: ruby/setup-ruby@v1.139.0
         with:
-          ruby-version: 2.7.2
+          ruby-version: ${{ env.RUBY_VERSION }}
           bundler-cache: true
 
       - name: Release
